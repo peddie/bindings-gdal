@@ -69,6 +69,9 @@ import Foreign.ForeignPtr (newForeignPtr)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Marshal.Utils (toBool, with)
 
+import Lens.Micro.Extras (view)
+import Linear.V3 (V3 (..), _x, _y, _z)
+
 import System.IO.Unsafe (unsafePerformIO)
 
 import GDAL.Internal.Types
@@ -294,17 +297,30 @@ foreign import ccall "ogr_srs_api.h &OCTDestroyCoordinateTransformation"
 class Projectable a where
   transformWith :: a -> CoordinateTransformation -> Maybe a
 
-instance Projectable (St.Vector (Pair Double)) where
+instance Projectable (St.Vector (V3 Double)) where
   transformWith = flip transformPoints
 
-transformPoints
+instance Projectable (St.Vector (Pair Double)) where
+  transformWith = flip transformPoints2D
+
+transformPoints2D
   :: CoordinateTransformation
   -> St.Vector (Pair Double)
   -> Maybe (St.Vector (Pair Double))
+transformPoints2D transform =
+  fmap (St.map v3ToPair) . transformPoints transform . St.map pairToV3
+  where
+    pairToV3 (x :+: y) = V3 x y 0
+    v3ToPair (V3 x y _) = x :+: y
+
+transformPoints
+  :: CoordinateTransformation
+  -> St.Vector (V3 Double)
+  -> Maybe (St.Vector (V3 Double))
 transformPoints ct v = unsafePerformIO $ withQuietErrorHandler $ do
-  xs <- St.unsafeThaw (St.unsafeCast (St.map pFst v))
-  ys <- St.unsafeThaw (St.unsafeCast (St.map pSnd v))
-  zs <- Stm.replicate len 0
+  xs <- St.unsafeThaw (St.unsafeCast (St.map (view _x) v))
+  ys <- St.unsafeThaw (St.unsafeCast (St.map (view _y) v))
+  zs <- St.unsafeThaw (St.unsafeCast (St.map (view _z) v))
   ok <- liftM toBool $
         withCoordinateTransformation ct $ \pCt ->
         Stm.unsafeWith xs $ \pXs ->
@@ -316,7 +332,8 @@ transformPoints ct v = unsafePerformIO $ withQuietErrorHandler $ do
     else do
       fXs <- liftM St.unsafeCast (St.unsafeFreeze xs)
       fYs <- liftM St.unsafeCast (St.unsafeFreeze ys)
-      return (Just (St.zipWith (:+:) fXs fYs))
+      fZs <- liftM St.unsafeCast (St.unsafeFreeze zs)
+      return (Just (St.zipWith3 V3 fXs fYs fZs))
   where len = St.length v
 
 
