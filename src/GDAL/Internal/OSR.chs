@@ -321,13 +321,21 @@ transformPoints ct v = unsafePerformIO $ withQuietErrorHandler $ do
   xs <- St.unsafeThaw (St.unsafeCast (St.map (view _x) v))
   ys <- St.unsafeThaw (St.unsafeCast (St.map (view _y) v))
   zs <- St.unsafeThaw (St.unsafeCast (St.map (view _z) v))
+  pab <- Stm.replicate len (0 :: CInt)
   ok <- liftM toBool $
         withCoordinateTransformation ct $ \pCt ->
         Stm.unsafeWith xs $ \pXs ->
         Stm.unsafeWith ys $ \pYs ->
         Stm.unsafeWith zs $ \pZs ->
-          {#call unsafe OCTTransform as ^#} pCt (fromIntegral len) pXs pYs pZs
-  if not ok
+        Stm.unsafeWith pab $ \pabSuccess ->
+          {#call unsafe OCTTransformEx as ^#} pCt (fromIntegral len) pXs pYs pZs pabSuccess
+  -- We must check the individual values, since
+  -- [GDAL may return `True`](https://gdal.org/api/ogrspatialref.html#_CPPv4N27OGRCoordinateTransformation9TransformEiPdPdPdPi) [ ](DONTLINTLINELENGTH)
+  -- for @ok@ even if some points failed.  It's not clear under what circumstances this may occur.
+  --
+  --     Returns: TRUE if some or all points transform successfully, or FALSE if if none transform.
+  reallyOk <- Stm.foldr' (\x y -> toBool x && y) True pab
+  if not (ok && reallyOk)
     then return Nothing
     else do
       fXs <- liftM St.unsafeCast (St.unsafeFreeze xs)
