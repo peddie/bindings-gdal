@@ -53,7 +53,7 @@ module GDAL.Internal.OSR (
 
 import Control.DeepSeq (NFData(..))
 import Control.Monad.Catch (mask_, try)
-import Control.Monad (liftM, (>=>), when, void)
+import Control.Monad (liftM, (>=>), when, void, foldM)
 
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 (useAsCString, unpack)
@@ -334,7 +334,7 @@ transformPoints ct v = unsafePerformIO $ withQuietErrorHandler $ do
   -- for @ok@ even if some points failed.  It's not clear under what circumstances this may occur.
   --
   --     Returns: TRUE if some or all points transform successfully, or FALSE if if none transform.
-  reallyOk <- Stm.foldr' (\x y -> toBool x && y) True pab
+  reallyOk <- stmFoldr' (\x y -> toBool x && y) True pab
   if not (ok && reallyOk)
     then return Nothing
     else do
@@ -343,6 +343,10 @@ transformPoints ct v = unsafePerformIO $ withQuietErrorHandler $ do
       fZs <- liftM St.unsafeCast (St.unsafeFreeze zs)
       return (Just (St.zipWith3 V3 fXs fYs fZs))
   where len = St.length v
+        -- This is only available from vector version 0.12.3 onwards.
+        stmFoldr' f z vec = foldM go z [0 .. Stm.length vec - 1]
+          where
+            go acc idx = (`f` acc) <$> vec `Stm.read` idx
 
 
 {#fun OSRCleanup as cleanup {} -> `()'#}
