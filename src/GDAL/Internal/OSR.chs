@@ -26,6 +26,8 @@ module GDAL.Internal.OSR (
   , isSameGeogCS
   , isSame
 
+  , setPROJSearchPaths
+
   , getAngularUnits
   , getLinearUnits
 
@@ -51,9 +53,11 @@ module GDAL.Internal.OSR (
 
 {# context lib = "gdal" prefix = "OSR" #}
 
+import Control.Monad.Trans.Cont (ContT (..))
+import Control.Monad.Trans.Class (lift)
 import Control.DeepSeq (NFData(..))
 import Control.Monad.Catch (mask_, try)
-import Control.Monad (liftM, (>=>), when, void, foldM)
+import Control.Monad (liftM, (>=>), when, void, foldM, zipWithM_)
 
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 (useAsCString, unpack)
@@ -67,6 +71,7 @@ import Foreign.Ptr (Ptr, FunPtr, castPtr, nullPtr)
 import Foreign.Storable (Storable(..))
 import Foreign.ForeignPtr (newForeignPtr)
 import Foreign.Marshal.Alloc (alloca)
+import Foreign.Marshal.Array (allocaArray0)
 import Foreign.Marshal.Utils (toBool, with)
 
 import Lens.Micro.Extras (view)
@@ -183,6 +188,16 @@ importFromWKT srs bs =
   useAsCString bs $ \bsPtr ->
   with bsPtr ({# call ImportFromWkt as ^ #} srsPtr)
 
+useAsCStrings :: [ByteString] -> (Ptr CString -> IO a) -> IO a
+useAsCStrings bss action = ($ action) . runContT $ do
+  ptrs <- ContT $ allocaArray0 n
+  -- The array must be null-terminated.
+  lift $ pokeElemOff ptrs n nullPtr
+  zipWithM_ (\buffer idx -> lift . pokeElemOff ptrs idx =<< (ContT $ useAsCString buffer)) bss [0..]
+  pure ptrs
+  where
+    n = length bss
+
 {#fun ImportFromProj4 as ^
    { withSpatialReference* `SpatialReference'
    , useAsCString* `ByteString'} -> `CInt' #}
@@ -194,6 +209,8 @@ importFromWKT srs bs =
    { withSpatialReference* `SpatialReference'
    , useAsCString* `ByteString'} -> `CInt' #}
 
+{#fun SetPROJSearchPaths as ^
+  { useAsCStrings* `[ByteString]'} -> `()' #}
 
 {#fun pure unsafe IsGeographic as ^
    {withSpatialReference* `SpatialReference'} -> `Bool'#}
